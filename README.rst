@@ -20,7 +20,7 @@ Install ``django-logpipe`` from pip.
 
 ::
 
-    $ pip install django-logpipe
+    $ pip install git+https://github.com/DiSoftCo/django-logpipe.git@r1.1.1
 
 Add ``logpipe`` to your installed apps.
 
