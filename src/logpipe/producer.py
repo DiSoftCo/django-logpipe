@@ -1,9 +1,10 @@
+from typing import Union
+
 from .backend import get_producer_backend
 from .constants import FORMAT_JSON
 from .format import render
 from . import settings
 import logging
-
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,8 @@ class Producer(object):
         self.topic_name = topic_name
         self.serializer_class = serializer_class
 
-    def send(self, instance, renderer=None):
+    def send(self, instance, renderer=None, action_type='save'):
         # Instantiate the serialize
-        ser = self.serializer_class(instance=instance)
 
         # Get the message type and version
         message_type = self.serializer_class.MESSAGE_TYPE
@@ -27,15 +27,24 @@ class Producer(object):
         # Get the message's partition key
         key_field = getattr(self.serializer_class, "KEY_FIELD", None)
         key = None
-        if key_field:
-            key = str(ser.data[key_field])
-
+        ser = None
+        if action_type == 'save':
+            ser = self.serializer_class(instance=instance)
+            if key_field:
+                key = str(ser.data[key_field])
+        elif action_type in ['delete', 'class']:
+            if not key_field:
+                raise KeyError('Add "key_field" to serializer')
+            key = str(instance[key_field])
+        else:
+            raise NotImplementedError('Please specify another action_type, use save/delete/class')
         # Render everything into a string
         renderer = settings.get("DEFAULT_FORMAT", FORMAT_JSON)
         body = {
             "type": message_type,
             "version": version,
-            "message": ser.data,
+            "message": ser.data if ser else instance,
+            "action_type": action_type,
         }
         serialized_data = render(renderer, body)
 
