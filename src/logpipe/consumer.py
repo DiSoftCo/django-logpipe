@@ -1,5 +1,6 @@
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
+from rest_framework.serializers import Serializer
 from .exceptions import (
     InvalidMessageError,
     IgnoredMessageTypeError,
@@ -82,6 +83,7 @@ class Consumer(object):
         self.consumer = get_consumer_backend(topic_name, **kwargs)
         self.throw_errors = throw_errors
         self.serializer_classes = {}
+        self.custom_classes = {}
         self.ignored_message_types = set([])
 
     def add_ignored_message_type(self, message_type):
@@ -102,7 +104,13 @@ class Consumer(object):
         for message, serializer in self:
             with transaction.atomic():
                 try:
-                    serializer.save()
+                    action_type = getattr(serializer, '_action_type', 'save')
+                    if action_type == 'delete':
+                        serializer.delete() if hasattr(serializer, 'delete') else serializer.instance.delete()
+                    elif action_type == 'save':
+                        serializer.save()
+                    elif action_type == 'class':
+                        serializer.receive()
                     self.commit(message)
                 except Exception as e:
                     info = (
@@ -174,6 +182,7 @@ class Consumer(object):
             )
 
         message_type = data["type"]
+        action_type = data.get('action_type', 'save')
         if message_type in self.ignored_message_types:
             raise IgnoredMessageTypeError(
                 'Received message with ignored type "%s" in topic %s'
@@ -193,12 +202,20 @@ class Consumer(object):
             )
 
         serializer_class = self.serializer_classes[message_type][version]
-
+        is_serializer = issubclass(serializer_class, Serializer)
         instance = None
-        if hasattr(serializer_class, "lookup_instance"):
+        if hasattr(serializer_class, "lookup_instance") and is_serializer:
             instance = serializer_class.lookup_instance(**data["message"])
-        serializer = serializer_class(instance=instance, data=data["message"])
-        serializer.is_valid(raise_exception=True)
+        if action_type == 'save':
+            serializer = serializer_class(instance=instance, data=data["message"])
+            serializer.is_valid(raise_exception=True)
+        elif action_type == 'delete':
+            serializer = serializer_class(instance=instance)
+        elif action_type == 'class':
+            serializer = serializer_class(data=data["message"])
+        else:
+            raise NotImplementedError("Can't use this action type")
+        serializer._action_type = action_type
         return serializer
 
 

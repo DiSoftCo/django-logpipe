@@ -218,6 +218,114 @@ Use the ``register_consumer`` decorator to register as many consumers and topics
 
     $ python manage.py run_kafka_consumer
 
+Use serializers for deleting instance
+------------------
+
+
+To processing deleting instance, we can reuse the same model and serializer. We just need to use in send dict and action type.
+We can use serializer from send instance, but in ``send`` we must send dict with key which use in serializer as key field.
+Example:
+
+::
+
+    class PersonSerializer(serializers.ModelSerializer):
+        MESSAGE_TYPE = 'person'
+        VERSION = 1
+        KEY_FIELD = 'uuid'
+
+        class Meta:
+            model = Person
+            fields = ['uuid', 'first_name', 'last_name']
+
+        @classmethod
+        def lookup_instance(cls, uuid, **kwargs):
+            try:
+                return Person.objects.get(uuid=uuid)
+            except models.Person.DoesNotExist:
+                pass
+
+    producer = Producer('people', PersonSerializer)
+    producer.send({'uuid': instance.uuid}, action_type='delete')
+
+
+For receive message we can have a "delete" method in serializer, which receive message, for custom deleting message.
+Example:
+
+::
+
+    class PersonSerializer(serializers.ModelSerializer):
+        MESSAGE_TYPE = 'person'
+        VERSION = 1
+        KEY_FIELD = 'uuid'
+
+        class Meta:
+            model = Person
+            fields = ['uuid', 'first_name', 'last_name']
+
+        @classmethod
+        def lookup_instance(cls, uuid, **kwargs):
+            try:
+                return Person.objects.get(uuid=uuid)
+            except models.Person.DoesNotExist:
+                pass
+
+        def delete(self):
+            # custom code
+            self.instance.delete()
+
+Custom classes for receive message
+---------------------------
+We can use custom classes for receive message, for running fully custom code. For sending we too must have a serializer with default fields.
+In the dict of sent custom message must be field with key which use KEY_FIELD in serializer.
+For receive message create class with ``data`` in ``__init__`` and add ``receive`` method without arguments and standard params.
+
+Example for send message:
+
+::
+
+    class PersonSerializer(serializers.ModelSerializer):
+        MESSAGE_TYPE = 'person'
+        VERSION = 1
+        KEY_FIELD = 'uuid'
+
+        class Meta:
+            model = Person
+            fields = ['uuid', 'first_name', 'last_name']
+
+        @classmethod
+        def lookup_instance(cls, uuid, **kwargs):
+            try:
+                return Person.objects.get(uuid=uuid)
+            except models.Person.DoesNotExist:
+                pass
+
+    producer = Producer('people', PersonSerializer)
+    producer.send({'uuid': instance.uuid, 'another_param': 'test'}, action_type='class')
+
+
+Example for receive message:
+
+::
+
+    class LogPipeReceiveCustomClass:
+        MESSAGE_TYPE = 'person'
+        VERSION = 1
+        KEY_FIELD = 'uuid'
+
+    def __init__(self, data):
+        self.data = data
+
+    def receive(self):
+        data = self.data
+        Person.objects.create(**data)
+        return
+
+    # apps.py
+    consumer = LogPipeConsumer('people')
+    consumer.register(LogPipeReceiveCustomClass)
+    return consumer
+
+Care about does not use a same MESSAGE_TYPE for for classes and serializers.
 
 Dealing with Schema Changes
 ---------------------------
