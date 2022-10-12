@@ -136,7 +136,8 @@ class Producer(object):
         return self._client
 
     def send(self, topic_name, key, value):
-        key = key.encode()
+        if isinstance(key, str):
+            key = key.encode()
         timeout = settings.get("KAFKA_SEND_TIMEOUT", 10)
         future = self.client.send(topic_name, key=key, value=value)
         metadata = future.get(timeout=timeout)

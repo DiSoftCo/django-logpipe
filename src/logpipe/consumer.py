@@ -7,18 +7,18 @@ from .exceptions import (
     UnknownMessageTypeError,
     UnknownMessageVersionError,
 )
-from .backend import get_offset_backend, get_consumer_backend
-from .format import parse
-from . import settings
+from .backend import get_offset_backend, get_consumer_backend, get_producer_backend
+from .format import parse, render, _delim
+from . import settings, FORMAT_JSON
 import itertools
 import logging
 import time
-
 
 logger = logging.getLogger(__name__)
 
 
 def consumer_error_handler(inner):
+
     while True:
         # Try to get the next message
         try:
@@ -72,7 +72,6 @@ def consumer_error_handler(inner):
                 )
             )
             inner.commit(e.message)
-
         pass
 
 
@@ -85,6 +84,10 @@ class Consumer(object):
         self.serializer_classes = {}
         self.custom_classes = {}
         self.ignored_message_types = set([])
+        self.error_topic = settings.get('ERROR_TOPIC', None)
+        self.producer_client = None
+        if self.error_topic:
+            self.producer_client = get_producer_backend()
 
     def add_ignored_message_type(self, message_type):
         self.ignored_message_types.add(message_type)
@@ -98,6 +101,17 @@ class Consumer(object):
         if message_type not in self.serializer_classes:
             self.serializer_classes[message_type] = {}
         self.serializer_classes[message_type][version] = serializer_class
+
+    def send_message_to_error_topic(self, message, error):
+        data = parse(message.value)
+        data['error'] = error
+        data['can_retry'] = True
+        code, _ = message.value.split(_delim, 1)
+        message_value = render(code, data)
+        self.producer_client.send(
+            self.error_topic, key=message.key, value=message_value
+        )
+        self.commit(message)
 
     def run(self, iter_limit=0):
         i = 0
@@ -123,7 +137,10 @@ class Consumer(object):
                         'Failed to process message with key "%s" from topic "%s", partition "%s", offset "%s"'
                         % info
                     )
-                    raise e
+                    if self.error_topic:
+                        self.send_message_to_error_topic(message, str(e))
+                    else:
+                        raise e
             i += 1
             if iter_limit > 0 and i >= iter_limit:
                 break
